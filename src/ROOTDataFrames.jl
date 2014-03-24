@@ -67,7 +67,7 @@ Base.size(df::TreeDataFrame, n) = size(df)[n]
 
 #df = TreeDataFrame(string(ENV["HOME"], "/Dropbox/kbfi/top/stpol/results/skims/feb27.root"))
 function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry=false)
-    get_entry && GetEntry(df.tt, i)
+    get_entry && GetEntry(df.tt, i-1)
     v, na = df.bvars[df.index[s]]
     return na[1] ? NA : v[1]
 end
@@ -88,7 +88,7 @@ function Base.getindex(df::TreeDataFrame, i::Int64)
     name = ns[i]
     enable_branches(df, ["$(name)*"])
     for n=1:nrow(df)
-        GetEntry(df.tt, n)
+        GetEntry(df.tt, n-1)
         da[n] = df[n, name]
     end
     return da
@@ -112,7 +112,7 @@ function Base.getindex(df::TreeDataFrame, s::Symbol)
     enable_branches(df, ["$(s)*"])
     ret = DataArray(df.types[df.index[s]], nrow(df))
     for i=1:nrow(df)
-        GetEntry(df.tt, i)
+        GetEntry(df.tt, i-1)
         ret[i] = df[i, s]
     end
     return ret
@@ -145,8 +145,6 @@ function writetree(fn, df::AbstractDataFrame;progress=true)
         bidx[symbol(cn)] = nb
 
         cn_na = symbol("$(cn)_ISNA")
-        push!(bnames, cn_na)
-        push!(btypes, Bool)
         bv = Bool[true]
         push!(bvars, bv)
 
@@ -167,9 +165,20 @@ function writetree(fn, df::AbstractDataFrame;progress=true)
     )
     
     for i=1:nrow(df)
-        Fill(dtf.tt)
-        for i=1:ncol(df)
+        for j=1:ncol(df)
+            const nc = 2 * j - 1
+            const nc_isna = 2 * j
+
+            if !isna(df[i, j])
+                dtf.bvars[nc_isna][1] = false
+                dtf.bvars[nc][1] = df[i, j]
+            else
+                dtf.bvars[nc][1] = convert(dtf.types[j], 0)
+                dtf.bvars[nc_isna][1] = true
+            end
         end
+
+        Fill(dtf.tt)
     end
 
     Write(tree)
