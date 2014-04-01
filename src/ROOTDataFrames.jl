@@ -6,18 +6,24 @@ import Base.length, Base.getindex
 import DataFrames.nrow, DataFrames.size
 
 immutable TreeDataFrame <: AbstractDataFrame
-    tf::TFile
-    tt::TTree
+    tf::TObjectA
+    tt::TTreeA
     bvars::Vector{Any}
     index::DataFrames.Index
     types::Vector{Type}
 end
 
-function TreeDataFrame(fn::ASCIIString)
-    tf = TFile(fn)
-    tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
+function TreeDataFrame(fns::AbstractVector)
 
-    brs = GetListOfBranches(tt);
+    tch = TChain("dataframe")
+
+    for fn in fns
+        AddFile(tch, convert(ASCIIString, fn))
+    end
+    #tf = TFile(fn)
+    #tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
+
+    brs = GetListOfBranches(tch);
     brs = [root_cast(TBranch, brs[i]) for i=1:length(brs)];
     
     bd = Dict()
@@ -46,9 +52,9 @@ function TreeDataFrame(fn::ASCIIString)
         bvar = (t[0.0], Bool[true]);
         push!(bvars, bvar)
         
-        br = GetBranch(tt, k)
+        br = GetBranch(tch, k)
         SetAddress(br, convert(Ptr{Void}, bvar[1]))
-        br = GetBranch(tt, "$(k)_ISNA")
+        br = GetBranch(tch, "$(k)_ISNA")
         SetAddress(br, convert(Ptr{Void}, bvar[2]))
         
         bidx[symbol(k)] = bridx
@@ -58,8 +64,10 @@ function TreeDataFrame(fn::ASCIIString)
 
     idx = DataFrames.Index(bidx, collect(keys(bidx)))
     
-    TreeDataFrame(tf, tt, bvars, idx, types)
+    TreeDataFrame(TObject(C_NULL), tch, bvars, idx, types)
 end
+
+TreeDataFrame(fn::String) = TreeDataFrame([fn])
 
 Base.length(t::TreeDataFrame) = GetEntries(t.tt)
 Base.size(df::TreeDataFrame) = (nrow(df), ncol(df))
@@ -117,6 +125,16 @@ function Base.getindex(df::TreeDataFrame, s::Symbol)
     end
     return ret
 end
+
+#function Base.getindex(df::TreeDataFrame, ss::AbstractVector{Symbol})
+#    enable_branches(df, ["$(s)*" for s in ss])
+#    #ret = DataArray(df.types[df.index[s]], nrow(df))
+#    for i=1:nrow(df)
+#        GetEntry(df.tt, i-1)
+#        ret[i] = df[i, s]
+#    end
+#    return ret
+#end
 
 function writetree(fn, df::AbstractDataFrame;progress=true)
     tf = TFile(fn, "RECREATE")
