@@ -18,7 +18,7 @@ function TreeDataFrame(fns::AbstractVector)
     tch = TChain("dataframe")
 
     for fn in fns
-        AddFile(tch, convert(ASCIIString, fn))
+        AddFile(tch, convert(ASCIIString, fn), -1)
     end
     #tf = TFile(fn)
     #tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
