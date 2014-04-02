@@ -13,9 +13,9 @@ immutable TreeDataFrame <: AbstractDataFrame
     types::Vector{Type}
 end
 
-function TreeDataFrame(fns::AbstractVector)
+function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
-    tch = TChain("dataframe")
+    tch = TChain(treename)
 
     for fn in fns
         AddFile(tch, convert(ASCIIString, fn), -1)
@@ -51,12 +51,14 @@ function TreeDataFrame(fns::AbstractVector)
         
         bvar = (t[0.0], Bool[true]);
         push!(bvars, bvar)
-        
-        br = GetBranch(tch, k)
-        SetAddress(br, convert(Ptr{Void}, bvar[1]))
-        br = GetBranch(tch, "$(k)_ISNA")
-        SetAddress(br, convert(Ptr{Void}, bvar[2]))
-        
+       
+        #does not work reliably for TChain
+        #br = GetBranch(tch, k)
+        #SetAddress(br, convert(Ptr{Void}, bvar[1]))
+        #br = GetBranch(tch, "$(k)_ISNA")
+        #SetAddress(br, convert(Ptr{Void}, bvar[2]))
+        SetBranchAddress(tch, k, convert(Ptr{Void}, bvar[1])) 
+        SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
         bidx[symbol(k)] = bridx
 
         bridx += 1
@@ -75,7 +77,9 @@ Base.size(df::TreeDataFrame, n) = size(df)[n]
 
 #df = TreeDataFrame(string(ENV["HOME"], "/Dropbox/kbfi/top/stpol/results/skims/feb27.root"))
 function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry=false)
-    get_entry && GetEntry(df.tt, i-1)
+    if get_entry
+        r = GetEvent(df.tt, i-1)
+    end
     v, na = df.bvars[df.index[s]]
     return na[1] ? NA : v[1]
 end
@@ -88,19 +92,7 @@ import Base.names
 Base.names(x::TreeDataFrame) = names(x.index)
 
 import DataFrames.eltypes
-DataFrames.eltype(x::TreeDataFrame) = x.types
-
-function Base.getindex(df::TreeDataFrame, i::Int64)
-    da = DataVector(df.types[i], nrow(df))
-    ns = names(df.index)
-    name = ns[i]
-    enable_branches(df, ["$(name)*"])
-    for n=1:nrow(df)
-        GetEntry(df.tt, n-1)
-        da[n] = df[n, name]
-    end
-    return da
-end
+DataFrames.eltypes(x::TreeDataFrame) = x.types
 
 set_branch_status!(df, pat, status) = SetBranchStatus(
     df.tt, pat, status, convert(Ptr{Cuint}, 0)
@@ -108,7 +100,7 @@ set_branch_status!(df, pat, status) = SetBranchStatus(
 
 function enable_branches(df, brs)
     SetCacheSize(df.tt, 0)
-    SetCacheSize(df.tt, 100000000)
+    SetCacheSize(df.tt, 256 * 1024 * 1024)
     set_branch_status!(df, "*", false)
     for b in brs
         set_branch_status!(df, "$b", true)
@@ -116,30 +108,39 @@ function enable_branches(df, brs)
     end
 end
 
-function Base.getindex(df::TreeDataFrame, s::Symbol)
-    enable_branches(df, ["$(s)*"])
-    ret = DataArray(df.types[df.index[s]], nrow(df))
+function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVector{Symbol})
+    length(mask) == nrow(df) || error("mask=$(length(mask)), nrow=$(nrow(df))")
+    enable_branches(df, ["$(s)*" for s in ss])
+    names_types = {
+        n => df.types[df.index[n]] for n in names(df)
+    } 
+
+    const n = sum(mask)
+    
+    const ret = DataFrame(
+        { DataArray(names_types[s], n) for s in ss},
+        DataFrames.Index(ss)
+    )
+    j = 1
     for i=1:nrow(df)
-        GetEntry(df.tt, i-1)
-        ret[i] = df[i, s]
+        (!isna(mask[i]) && mask[i]) || continue
+        GetEvent(df.tt, i-1)
+        for nn in ss
+            ret[j, nn] = df[j, nn]
+        end
+        j += 1
     end
     return ret
 end
 
-#function Base.getindex(df::TreeDataFrame, ss::AbstractVector{Symbol})
-#    enable_branches(df, ["$(s)*" for s in ss])
-#    #ret = DataArray(df.types[df.index[s]], nrow(df))
-#    for i=1:nrow(df)
-#        GetEntry(df.tt, i-1)
-#        ret[i] = df[i, s]
-#    end
-#    return ret
-#end
+Base.getindex(df::TreeDataFrame, s::Symbol) = df[[s]][s]
+Base.getindex(df::TreeDataFrame, ss::AbstractVector{Symbol}) = df[[true for i=1:nrow(df)], ss]
+Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]][s]
 
-function writetree(fn, df::AbstractDataFrame;progress=true)
+function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe")
     tf = TFile(fn, "RECREATE")
     const tree = TTree(
-        "dataframe", "dataframe",
+        treename, treename 
     )
 
     bnames = Symbol[]
