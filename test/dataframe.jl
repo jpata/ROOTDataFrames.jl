@@ -35,4 +35,4 @@ tdf = TreeDataFrame("big.root")
 
 tdf = TreeDataFrame(["big.root", "big.root"])
 @test nrow(tdf) == 2 * nrow(df)
-
+rm("big.root")
