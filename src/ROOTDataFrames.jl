@@ -25,7 +25,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
     brs = GetListOfBranches(tch);
     brs = [root_cast(TBranch, brs[i]) for i=1:length(brs)];
-    
+
     bd = Dict()
     bd_isna = Dict()
     for b in brs
@@ -48,16 +48,16 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         t = GetTypeName(leaf)|>bytestring|>parse
         t = eval(ROOT.type_replacement[t])::Type
         push!(types, t)
-        
+
         bvar = (t[0.0], Bool[true]);
         push!(bvars, bvar)
-       
+
         #does not work reliably for TChain
         #br = GetBranch(tch, k)
         #SetAddress(br, convert(Ptr{Void}, bvar[1]))
         #br = GetBranch(tch, "$(k)_ISNA")
         #SetAddress(br, convert(Ptr{Void}, bvar[2]))
-        SetBranchAddress(tch, k, convert(Ptr{Void}, bvar[1])) 
+        SetBranchAddress(tch, k, convert(Ptr{Void}, bvar[1]))
         SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
         bidx[symbol(k)] = bridx
 
@@ -65,7 +65,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     end
 
     idx = DataFrames.Index(bidx, collect(keys(bidx)))
-    
+
     TreeDataFrame(TObject(C_NULL), tch, bvars, idx, types)
 end
 
@@ -75,10 +75,13 @@ Base.length(t::TreeDataFrame) = GetEntries(t.tt)
 Base.size(df::TreeDataFrame) = (nrow(df), ncol(df))
 Base.size(df::TreeDataFrame, n) = size(df)[n]
 
-#df = TreeDataFrame(string(ENV["HOME"], "/Dropbox/kbfi/top/stpol/results/skims/feb27.root"))
+function load_row(df::TreeDataFrame, i::Integer)
+    return GetEvent(df.tt, i-1)
+end
+
 function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry=false)
     if get_entry
-        r = GetEvent(df.tt, i-1)
+        load_row(df, i)
     end
     v, na = df.bvars[df.index[s]]
     return na[1] ? NA : v[1]
@@ -113,10 +116,10 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
     enable_branches(df, ["$(s)*" for s in ss])
     names_types = {
         n => df.types[df.index[n]] for n in names(df)
-    } 
+    }
 
     const n = sum(mask)
-    
+
     const ret = DataFrame(
         { DataArray(names_types[s], n) for s in ss},
         DataFrames.Index(ss)
@@ -124,7 +127,7 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
     j = 1
     for i=1:nrow(df)
         (!isna(mask[i]) && mask[i]) || continue
-        GetEvent(df.tt, i-1)
+        load_row(df, i)
         for nn in ss
             ret[j, nn] = df[j, nn]
         end
@@ -140,7 +143,7 @@ Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]
 function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe")
     tf = TFile(fn, "RECREATE")
     const tree = TTree(
-        treename, treename 
+        treename, treename
     )
 
     bnames = Symbol[]
@@ -182,7 +185,7 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
         DataFrames.Index(bidx, collect(keys(bidx))),
         btypes
     )
-    
+
     for i=1:nrow(df)
         for j=1:ncol(df)
             const nc = 2 * j - 1
@@ -205,5 +208,5 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
 end
 
 export writetree, TreeDataFrame
+export load_row
 end # module
-
