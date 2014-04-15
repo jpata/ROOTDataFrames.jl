@@ -26,13 +26,14 @@ tdf = TreeDataFrame("test.root")
 tdf = TreeDataFrame(["test.root", "test.root"])
 @test nrow(tdf) == 6
 @test all(tdf[:a] .== vcat(df[:a], df[:a]))
-rm("test.root")
+#rm("test.root")
 
-df = DataFrame(x=Int64[i for i=1:10^7])
+df = DataFrame(x = Int64[i for i=1:10^7])
+
 writetree("big.root", df)
 tdf = TreeDataFrame("big.root")
 @test nrow(tdf) == nrow(df)
 
 tdf = TreeDataFrame(["big.root", "big.root"])
 @test nrow(tdf) == 2 * nrow(df)
-rm("big.root")
+#rm("big.root")

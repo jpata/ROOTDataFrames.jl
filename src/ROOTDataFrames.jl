@@ -29,7 +29,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     bd = Dict()
     bd_isna = Dict()
     for b in brs
-        bn = GetName(root_cast(TObject, b))|>bytestring;
+        bn = GetName(root_cast(TObject, b)) |> bytestring;
         if contains(bn, "ISNA")
             bd_isna[join(split(bn, "_")[1:end-1], "_")] = b
         else
@@ -41,6 +41,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     bvars = Any[]
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
     types = Type[]
+    println(collect(keys(bd)))
     for k in keys(bd)
         leaves = GetListOfLeaves(bd[k])
         length(leaves)==1 || error("$k, Nleaf=$(length(leaves))")
@@ -57,8 +58,17 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #SetAddress(br, convert(Ptr{Void}, bvar[1]))
         #br = GetBranch(tch, "$(k)_ISNA")
         #SetAddress(br, convert(Ptr{Void}, bvar[2]))
+
+
         SetBranchAddress(tch, k, convert(Ptr{Void}, bvar[1]))
-        SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
+        if haskey(bd_isna, k)
+            #println("NA branch activated for $k")
+            SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
+            bvar[2][1] = true
+        else
+            #println("NA branch de-activated for $k")
+            bvar[2][1] = false
+        end
         bidx[symbol(k)] = bridx
 
         bridx += 1
