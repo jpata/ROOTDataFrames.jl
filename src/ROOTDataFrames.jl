@@ -3,7 +3,7 @@ module ROOTDataFrames
 using ROOT, DataFrames, DataArrays
 import Base.length, Base.getindex
 
-import DataFrames.nrow, DataFrames.size
+import DataFrames.nrow, DataFrames.size, DataFrames.index
 
 immutable TreeDataFrame <: AbstractDataFrame
     tf::TObjectA
@@ -41,7 +41,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     bvars = Any[]
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
     types = Type[]
-    println(collect(keys(bd)))
+    #println(collect(keys(bd)))
     for k in keys(bd)
         leaves = GetListOfLeaves(bd[k])
         length(leaves)==1 || error("$k, Nleaf=$(length(leaves))")
@@ -217,6 +217,9 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
     Close(tf)
 end
 
+index(df::TreeDataFrame) = df.index
+
 export writetree, TreeDataFrame
 export load_row
+export enable_branches
 end # module
