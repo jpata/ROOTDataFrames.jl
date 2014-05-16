@@ -18,6 +18,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     tch = TChain(treename)
 
     for fn in fns
+        #println("adding file $fn")
         AddFile(tch, convert(ASCIIString, fn), -1)
     end
     #tf = TFile(fn)
@@ -29,6 +30,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     bd = Dict()
     bd_isna = Dict()
     for b in brs
+        #println("creating branch $b")
         bn = GetName(root_cast(TObject, b)) |> bytestring;
         if contains(bn, "ISNA")
             bd_isna[join(split(bn, "_")[1:end-1], "_")] = b
@@ -81,7 +83,13 @@ end
 
 TreeDataFrame(fn::String) = TreeDataFrame([fn])
 
-Base.length(t::TreeDataFrame) = GetEntries(t.tt)
+function Base.length(t::TreeDataFrame)
+    if t.tt != C_NULL
+        return GetEntries(t.tt)
+    else
+        return 0
+    end
+end
 Base.size(df::TreeDataFrame) = (nrow(df), ncol(df))
 Base.size(df::TreeDataFrame, n) = size(df)[n]
 
