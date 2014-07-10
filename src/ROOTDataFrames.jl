@@ -158,7 +158,7 @@ Base.getindex(df::TreeDataFrame, s::Symbol) = df[[s]][s]
 Base.getindex(df::TreeDataFrame, ss::AbstractVector{Symbol}) = df[[true for i=1:nrow(df)], ss]
 Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]][s]
 
-function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe")
+function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="dataframe")
     tf = TFile(fn, "RECREATE")
     const tree = TTree(
         treename, treename
@@ -170,9 +170,9 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
 
     nb = 1
-    for (cn, ct) in zip(names(df), eltypes(df))
-        push!(bnames, cn)
-        push!(btypes, ct)
+    for (cn, ct) in zip(ns, types)
+        push!(bnames, convert(Symbol, cn))
+        push!(btypes, convert(Type, ct))
 
         bv = ct[0]
         push!(bvars, bv)
@@ -203,12 +203,15 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
         DataFrames.Index(bidx, collect(keys(bidx))),
         btypes
     )
+end
+
+function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe")
+    dtf = TreeDataFrame(fn, names(df), eltypes(df);treename=treename)
 
     for i=1:nrow(df)
         for j=1:ncol(df)
             const nc = 2 * j - 1
             const nc_isna = 2 * j
-
             if !isna(df[i, j])
                 dtf.bvars[nc_isna][1] = false
                 dtf.bvars[nc][1] = df[i, j]
@@ -221,8 +224,8 @@ function writetree(fn, df::AbstractDataFrame;progress=true, treename="dataframe"
         Fill(dtf.tt)
     end
 
-    Write(tree)
-    Close(tf)
+    Write(dtf.tt)
+    Close(dtf.tf)
 end
 
 index(df::TreeDataFrame) = df.index
