@@ -46,9 +46,16 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     #println(collect(keys(bd)))
     for k in keys(bd)
         leaves = GetListOfLeaves(bd[k])
-        length(leaves)==1 || error("$k, Nleaf=$(length(leaves))")
+        if length(leaves)!=1
+            warn("$k, Nleaf=$(length(leaves)), skipping")
+            continue
+        end
         leaf = root_cast(TLeaf, leaves[1])
         t = GetTypeName(leaf)|>bytestring|>parse
+        if !haskey(ROOT.type_replacement, t)
+            warn("branch $k with type $(bytestring(GetTypeName(leaf))) does not have a julia typle replacement") 
+            continue
+        end
         t = eval(ROOT.type_replacement[t])::Type
         push!(types, t)
 
@@ -61,8 +68,9 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #br = GetBranch(tch, "$(k)_ISNA")
         #SetAddress(br, convert(Ptr{Void}, bvar[2]))
 
-
-        SetBranchAddress(tch, k, convert(Ptr{Void}, bvar[1]))
+        #print(bvar[1])
+        SetBranchAddress(tch, k, convert(Ptr{None}, pointer(bvar[1])))
+        #SetBranchAddress(tch, k, bvar[1])
         if haskey(bd_isna, k)
             #println("NA branch activated for $k")
             SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
@@ -125,7 +133,7 @@ function enable_branches(df, brs)
     set_branch_status!(df, "*", false)
     for b in brs
         set_branch_status!(df, "$b", true)
-        AddBranchToCache(df.tt, "$b")
+        #AddBranchToCache(df.tt, "$b")
     end
 end
 
