@@ -18,15 +18,16 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     tch = TChain(treename)
 
     for fn in fns
-        #println("adding file $fn")
+        println("adding file $fn")
         AddFile(tch, convert(ASCIIString, fn), -1)
     end
+    println("TChain created")
     #tf = TFile(fn)
     #tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
 
     brs = GetListOfBranches(tch);
     brs = [root_cast(TBranch, brs[i]) for i=1:length(brs)];
-
+    println("TTree has $(length(brs)) branches")
     bd = Dict()
     bd_isna = Dict()
     for b in brs
