@@ -239,7 +239,26 @@ end
 
 index(df::TreeDataFrame) = df.index
 
+function writetree_temp(outfile, df::DataFrame)
+    tempf = mktemp()[1]
+    print("writing to $tempf...");writetree(tempf, df);println("done")
+    
+    for i=1:5
+        try
+            println("cleaning $outfile...");isfile(outfile) && rm(outfile)
+            println("copying...");cp(tempf, outfile)
+            s = stat(outfile)
+            s.size == 0 && error("file corrupted")
+            break
+        catch err
+            warn("$err: retrying after sleep")
+            sleep(5)
+        end
+    end
+end
+
 export writetree, TreeDataFrame
+export writetree_temp
 export load_row
 export enable_branches
 end # module
