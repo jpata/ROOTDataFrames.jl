@@ -10,6 +10,7 @@ writetree("test.root", df)
 tdf = TreeDataFrame("test.root")
 @test size(tdf) == size(df)
 #@test all(names(tdf) .== [:a, :b, :c, :e])
+println(tdf[[:a, :b, :c, :e]])
 
 @test all(tdf[:a] .== df[:a])
 

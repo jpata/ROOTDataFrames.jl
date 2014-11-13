@@ -5,7 +5,7 @@ import Base.length, Base.getindex
 
 import DataFrames.nrow, DataFrames.size, DataFrames.index
 
-immutable TreeDataFrame <: AbstractDataFrame
+type TreeDataFrame <: AbstractDataFrame
     tf::TObjectA
     tt::TTreeA
     bvars::Vector{Any}
@@ -18,16 +18,16 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     tch = TChain(treename)
 
     for fn in fns
-        println("adding file $fn")
+        #println("adding file $fn")
         AddFile(tch, convert(ASCIIString, fn), -1)
     end
-    println("TChain created")
+    #println("TChain $tch created")
     #tf = TFile(fn)
     #tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
 
     brs = GetListOfBranches(tch);
     brs = [root_cast(TBranch, brs[i]) for i=1:length(brs)];
-    println("TTree has $(length(brs)) branches")
+    #println("TTree has $(length(brs)) branches")
     bd = Dict()
     bd_isna = Dict()
     for b in brs
@@ -46,6 +46,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     types = Type[]
     #println(collect(keys(bd)))
     for k in keys(bd)
+        #println("branch $k")
         leaves = GetListOfLeaves(bd[k])
         if length(leaves)!=1
             warn("$k, Nleaf=$(length(leaves)), skipping")
@@ -57,6 +58,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
             warn("branch $k with type $(bytestring(GetTypeName(leaf))) does not have a julia typle replacement") 
             continue
         end
+        #println("type $t")
         t = eval(ROOT.type_replacement[t])::Type
         push!(types, t)
 
@@ -70,7 +72,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #SetAddress(br, convert(Ptr{Void}, bvar[2]))
 
         #print(bvar[1])
-        SetBranchAddress(tch, k, convert(Ptr{None}, pointer(bvar[1])))
+        SetBranchAddress(tch, k, convert(Ptr{Void}, pointer(bvar[1])))
         #SetBranchAddress(tch, k, bvar[1])
         if haskey(bd_isna, k)
             #println("NA branch activated for $k")
@@ -106,12 +108,12 @@ function load_row(df::TreeDataFrame, i::Integer)
     return GetEvent(df.tt, i-1)
 end
 
-function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry=false)
+function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry::Bool=false)
     if get_entry
         load_row(df, i)
     end
-    v, na = df.bvars[df.index[s]]
-    return na[1] ? NA : v[1]
+    v::Vector{Any}, na::Vector{Bool} = df.bvars[df.index[s]]
+    return na[1] ? NA : deepcopy(v[1])
 end
 
 import DataFrames.nrow, DataFrames.ncol
@@ -129,37 +131,49 @@ set_branch_status!(df, pat, status) = SetBranchStatus(
 )
 
 function enable_branches(df, brs)
-    SetCacheSize(df.tt, 0)
-    SetCacheSize(df.tt, 256 * 1024 * 1024)
+    #println("enabling branches $brs")
+    #SetCacheSize(df.tt, 0)
+    #SetCacheSize(df.tt, 256 * 1024 * 1024)
     set_branch_status!(df, "*", false)
     for b in brs
         set_branch_status!(df, "$b", true)
-        #AddBranchToCache(df.tt, "$b")
+        #AddBranchToCache(df.tt, "$b") #cache does not work properly, causes crash
     end
 end
 
 function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVector{Symbol})
     length(mask) == nrow(df) || error("mask=$(length(mask)), nrow=$(nrow(df))")
     enable_branches(df, ["$(s)*" for s in ss])
-    names_types = {
-        n => df.types[df.index[n]] for n in names(df)
-    }
+    names_types = Dict{Any,Any}([n=>df.types[df.index[n]] for n in names(df)])
 
     const n = sum(mask)
 
+    #need to disable GC to prevent silent corruption and crash
+    #still un-understood 
+    #gc_disable()
+    
     const ret = DataFrame(
-        { DataArray(names_types[s], n) for s in ss},
+        Any[DataFrames.DataArray(names_types[s], n) for s in ss],
         DataFrames.Index(ss)
     )
     j = 1
+
+
+    t0 = time()
     for i=1:nrow(df)
         (!isna(mask[i]) && mask[i]) || continue
-        load_row(df, i)
+        nloaded = load_row(df, i)
+        #println(i, " ", nloaded)
+        i%50000 == 0 && print(".")
         for nn in ss
             ret[j, nn] = df[j, nn]
         end
         j += 1
     end
+    t1 = time()
+    println()
+    println(nrow(df)/(t1-t0))
+    #gc_enable()
     return ret
 end
 
@@ -188,7 +202,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
 
         br = Branch(
             tree, string(cn),
-            convert(Ptr{None}, pointer(bv)),
+            convert(Ptr{Void}, pointer(bv)),
             "$cn/$(SHORT_TYPEMAP[ct])"
         )
         bidx[symbol(cn)] = nb
@@ -199,7 +213,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
 
         br = Branch(
             tree, string(cn_na),
-            convert(Ptr{None}, pointer(bv)),
+            convert(Ptr{Void}, pointer(bv)),
             "$cn_na/O"
         )
         bidx[cn_na] = nb
