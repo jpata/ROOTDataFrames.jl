@@ -1,5 +1,6 @@
 module ROOTDataFrames
 
+const MAX_SIZE = 500
 using ROOT, DataFrames, DataArrays
 import Base.length, Base.getindex
 
@@ -13,6 +14,23 @@ type TreeDataFrame <: AbstractDataFrame
     types::Vector{Type}
     leafsizes::Vector{Any}
 end
+
+import DataFrames.showcols
+function showcols(io::IO, df::TreeDataFrame)
+    println(io, summary(df))
+    metadata = DataFrame(Name = names(df),
+        Eltype = eltypes(df),
+        #Missing = colmissing(df)
+    )
+    showall(io, metadata, true, symbol("Col #"), false)
+    return
+end
+import DataFrames.show
+function show(io::IO, df::TreeDataFrame)
+    showcols(io, df)
+    return
+end
+
 
 function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
@@ -59,7 +77,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         leafsize = 1
         if leaf_staticsize!=1
             leafsize = leaf_staticsize 
-            warn("$k, nleaf size == $(leaf_staticsize)")
+            #warn("$k, nleaf size == $(leaf_staticsize)")
             #continue
         end
 
@@ -67,8 +85,8 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         if lc != C_NULL
             lc = TLeaf(lc)
             bname = lc |> GetName |> bytestring
-            leafsize = bname
-            warn("$k, nleaf size dynamic $bname")
+            leafsize = symbol(bname)
+            #warn("$k, nleaf size dynamic $bname")
             #continue
         end
 
@@ -83,7 +101,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
         push!(leafsizes, leafsize)
 
-        _leafsize = isa(leafsize, Real) ? leafsize : 500
+        _leafsize = isa(leafsize, Real) ? leafsize : MAX_SIZE 
 
         bvar = (zeros(t, _leafsize), Bool[true for i=1:_leafsize])
         push!(bvars, bvar)
@@ -94,16 +112,16 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #br = GetBranch(tch, "$(k)_ISNA")
         #SetAddress(br, convert(Ptr{Void}, bvar[2]))
 
-        #print(bvar[1])
+        #println(bvar[1])
         SetBranchAddress(tch, k, convert(Ptr{Void}, pointer(bvar[1])))
         #SetBranchAddress(tch, k, bvar[1])
         if haskey(bd_isna, k)
             #println("NA branch activated for $k")
             SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
-            bvar[2][1] = true
+            bvar[2][:] = true
         else
             #println("NA branch de-activated for $k")
-            bvar[2][1] = false
+            bvar[2][:] = false
         end
         bidx[symbol(k)] = bridx
 
@@ -137,7 +155,11 @@ function Base.getindex{T <: Any}(df::TreeDataFrame, i::Int64, s::Symbol, t::Type
     end
     v::Vector{T}, na::Vector{Bool} = df.bvars[df.index[s]]
     ret = DataArray(v, na)
-    return length(ret)>1 ? ret : first(ret)
+    _size = df.leafsizes[df.index[s]]
+    if isa(_size, Symbol)
+        _size = df[i, _size, df.types[df.index[_size]]]
+    end
+    return length(ret)>1 ? ret[1:_size] : first(ret)
 end
 
 import DataFrames.nrow, DataFrames.ncol
@@ -176,9 +198,22 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
     #need to disable GC to prevent silent corruption and crash
     #still un-understood 
     #gc_disable()
-    
+   
+    arrlist = Any[]
+    for s in ss
+        _size = sizes[s]
+        _type = names_types[s]
+        if typeof(_size) <: Symbol
+            _size = MAX_SIZE
+        end
+        if _size > 1
+            _type = DataVector{_type}
+        end
+        a = DataFrames.DataArray(_type, n)
+        push!(arrlist, a)
+    end
     const ret = DataFrame(
-        Any[DataFrames.DataArray(sizes[s]>1 ? DataVector{names_types[s]} : names_types[s], n) for s in ss],
+        arrlist,
         DataFrames.Index(ss)
     )
     j = 1
@@ -201,6 +236,8 @@ end
 
 Base.getindex(df::TreeDataFrame, s::Symbol) = df[[s]][s]
 Base.getindex(df::TreeDataFrame, ss::AbstractVector{Symbol}) = df[[true for i=1:nrow(df)], ss]
+Base.getindex(df::TreeDataFrame, inds::AbstractVector{Int64}, ss::AbstractVector{Symbol}) = df[[i in inds for i=1:nrow(df)], ss]
+Base.getindex(df::TreeDataFrame, i::Int64, ss::AbstractVector{Symbol}) = df[[i], ss]
 Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]][s]
 
 function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="dataframe")
