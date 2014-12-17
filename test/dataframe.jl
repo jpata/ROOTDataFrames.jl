@@ -1,7 +1,7 @@
 using ROOTDataFrames, DataFrames
 using Base.Test
 
-df = DataFrame(a=Float64[1.0, 2.0, 3.0], b=Int64[0, 1, 2], c=['a', 'c', 'e'], e=[1, 1, 1])
+df = DataFrame(a=Float64[1.0, 2.0, 3.0], b=Int64[0, 1, 2], e=Int32[1, 1, 1])
 df[3, :e] = NA
 
 writetree("test.root", df)
@@ -9,8 +9,7 @@ writetree("test.root", df)
 
 tdf = TreeDataFrame("test.root")
 @test size(tdf) == size(df)
-#@test all(names(tdf) .== [:a, :b, :c, :e])
-println(tdf[[:a, :b, :c, :e]])
+#@test all(names(tdf) .== [:a, :b, :e])
 
 @test all(tdf[:a] .== df[:a])
 
@@ -18,7 +17,6 @@ println(tdf[[:a, :b, :c, :e]])
 @test all(tdf[[:a, :b]][:b] .== df[[:a, :b]][:b])
 
 @test all(tdf[:b] .== df[:b])
-@test all(tdf[:c] .== df[:c])
 @test isna(tdf[3, :e])
 @test all(tdf[:e][1:2] .== df[:e][1:2])
 

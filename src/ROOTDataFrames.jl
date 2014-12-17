@@ -51,7 +51,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #println("branch $k")
         leaves = GetListOfLeaves(bd[k])
         if length(leaves)!=1
-            warn("$k, nleaf=$(length(leaves)), skipping")
+            #warn("$k, nleaf=$(length(leaves))")
             continue
         end
         leaf = root_cast(TLeaf, leaves[1])
@@ -59,7 +59,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         leafsize = 1
         if leaf_staticsize!=1
             leafsize = leaf_staticsize 
-            #warn("$k, nleaf size == $(leaf_staticsize), skipping")
+            warn("$k, nleaf size == $(leaf_staticsize)")
             #continue
         end
 
@@ -68,7 +68,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
             lc = TLeaf(lc)
             bname = lc |> GetName |> bytestring
             leafsize = bname
-            #warn("$k, nleaf size dynamic $bname, skipping")
+            warn("$k, nleaf size dynamic $bname")
             #continue
         end
 
@@ -78,14 +78,14 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
             warn("branch $k with type $(bytestring(GetTypeName(leaf))) does not have a julia typle replacement") 
             continue
         end
-        #println("type $t")
         t = eval(ROOT.type_replacement[t])::Type
         push!(types, t)
+
         push!(leafsizes, leafsize)
 
         _leafsize = isa(leafsize, Real) ? leafsize : 500
 
-        bvar = (zeros(t, _leafsize), Bool[true])
+        bvar = (zeros(t, _leafsize), Bool[true for i=1:_leafsize])
         push!(bvars, bvar)
 
         #does not work reliably for TChain
@@ -131,12 +131,13 @@ function load_row(df::TreeDataFrame, i::Integer)
     return GetEvent(df.tt, i-1)
 end
 
-function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry::Bool=false)
+function Base.getindex{T <: Any}(df::TreeDataFrame, i::Int64, s::Symbol, t::Type{T}=Any, get_entry::Bool=false)
     if get_entry
         load_row(df, i)
     end
-    v::Vector{Any}, na::Vector{Bool} = df.bvars[df.index[s]]
-    return na[1] ? NA : v
+    v::Vector{T}, na::Vector{Bool} = df.bvars[df.index[s]]
+    ret = DataArray(v, na)
+    return length(ret)>1 ? ret : first(ret)
 end
 
 import DataFrames.nrow, DataFrames.ncol
@@ -167,7 +168,8 @@ end
 function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVector{Symbol})
     length(mask) == nrow(df) || error("mask=$(length(mask)), nrow=$(nrow(df))")
     enable_branches(df, ["$(s)*" for s in ss])
-    names_types = Dict{Any,Any}([n=>df.types[df.index[n]] for n in names(df)])
+    names_types = Dict{Symbol, DataType}([n=>df.types[df.index[n]] for n in names(df)])
+    sizes = Dict{Symbol, Any}([n=>df.leafsizes[df.index[n]] for n in names(df)])
 
     const n = sum(mask)
 
@@ -176,7 +178,7 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
     #gc_disable()
     
     const ret = DataFrame(
-        Any[DataFrames.DataArray(names_types[s], n) for s in ss],
+        Any[DataFrames.DataArray(sizes[s]>1 ? DataVector{names_types[s]} : names_types[s], n) for s in ss],
         DataFrames.Index(ss)
     )
     j = 1
@@ -186,17 +188,13 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
     for i=1:nrow(df)
         (!isna(mask[i]) && mask[i]) || continue
         nloaded = load_row(df, i)
-        #println(i, " ", nloaded)
-        #i%50000 == 0 && print(".")
         for nn in ss
-            x = df[j, nn]
-            ret[j, nn] = x[1]
+            x = df[j, nn, names_types[nn]]
+            ret[j, nn] = x
         end
         j += 1
     end
     t1 = time()
-    #println()
-    #println(nrow(df)/(t1-t0))
     #gc_enable()
     return ret
 end
