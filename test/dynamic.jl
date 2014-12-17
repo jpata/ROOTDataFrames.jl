@@ -1,9 +1,7 @@
 using DataFrames, ROOT, ROOTDataFrames
 using Base.Test
 
-df = TreeDataFrame(["dynamic.root"], "tthNtupleAnalyzer/events")
-
-println(df)
+df = TreeDataFrame([string(Pkg.dir(), "/ROOTDataFrames/dynamic.root")], "tthNtupleAnalyzer/events")
 
 sumpt = 0.0
 sumjet = 0
