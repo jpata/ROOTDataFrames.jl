@@ -5,8 +5,8 @@ Wraps ROOT TTrees through the AbstractDataFrame interface. Supports on-demand ac
 #Installation
 
 1. Install ROOT.jl: http://github.com/jpata/ROOT.jl
-2. Install this package using `git clone`
-3. Test using `julia test/dataframe.jl`
+2. Install this package using `Pkg.clone("https://github.com/jpata/ROOTDataFrames.jl.git")`
+3. Test using `Pkg.test("ROOTDataFrames")`
 
 #Usage
 
