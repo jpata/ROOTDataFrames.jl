@@ -11,6 +11,7 @@ type TreeDataFrame <: AbstractDataFrame
     bvars::Vector{Any}
     index::DataFrames.Index
     types::Vector{Type}
+    leafsizes::Vector{Any}
 end
 
 function TreeDataFrame(fns::AbstractVector, treename="dataframe")
@@ -44,14 +45,33 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     bvars = Any[]
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
     types = Type[]
+    leafsizes = Any[]
     #println(collect(keys(bd)))
     for k in keys(bd)
         #println("branch $k")
         leaves = GetListOfLeaves(bd[k])
         if length(leaves)!=1
-            warn("$k, Nleaf=$(length(leaves)), skipping")
+            warn("$k, nleaf=$(length(leaves)), skipping")
             continue
         end
+        leaf = root_cast(TLeaf, leaves[1])
+        leaf_staticsize = ROOT.GetLenStatic(leaf)
+        leafsize = 1
+        if leaf_staticsize!=1
+            leafsize = leaf_staticsize 
+            #warn("$k, nleaf size == $(leaf_staticsize), skipping")
+            #continue
+        end
+
+        lc = ROOT.GetLeafCount(leaf)
+        if lc != C_NULL
+            lc = TLeaf(lc)
+            bname = lc |> GetName |> bytestring
+            leafsize = bname
+            #warn("$k, nleaf size dynamic $bname, skipping")
+            #continue
+        end
+
         leaf = root_cast(TLeaf, leaves[1])
         t = GetTypeName(leaf)|>bytestring|>parse
         if !haskey(ROOT.type_replacement, t)
@@ -61,8 +81,11 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
         #println("type $t")
         t = eval(ROOT.type_replacement[t])::Type
         push!(types, t)
+        push!(leafsizes, leafsize)
 
-        bvar = (t[0.0], Bool[true]);
+        _leafsize = isa(leafsize, Real) ? leafsize : 500
+
+        bvar = (zeros(t, _leafsize), Bool[true])
         push!(bvars, bvar)
 
         #does not work reliably for TChain
@@ -89,7 +112,7 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
     idx = DataFrames.Index(bidx, collect(keys(bidx)))
 
-    TreeDataFrame(TObject(C_NULL), tch, bvars, idx, types)
+    TreeDataFrame(TObject(C_NULL), tch, bvars, idx, types, leafsizes)
 end
 
 TreeDataFrame(fn::String) = TreeDataFrame([fn])
@@ -113,7 +136,7 @@ function Base.getindex(df::TreeDataFrame, i::Int64, s::Symbol, get_entry::Bool=f
         load_row(df, i)
     end
     v::Vector{Any}, na::Vector{Bool} = df.bvars[df.index[s]]
-    return na[1] ? NA : deepcopy(v[1])
+    return na[1] ? NA : v
 end
 
 import DataFrames.nrow, DataFrames.ncol
@@ -164,15 +187,16 @@ function Base.getindex(df::TreeDataFrame, mask::AbstractVector, ss::AbstractVect
         (!isna(mask[i]) && mask[i]) || continue
         nloaded = load_row(df, i)
         #println(i, " ", nloaded)
-        i%50000 == 0 && print(".")
+        #i%50000 == 0 && print(".")
         for nn in ss
-            ret[j, nn] = df[j, nn]
+            x = df[j, nn]
+            ret[j, nn] = x[1]
         end
         j += 1
     end
     t1 = time()
-    println()
-    println(nrow(df)/(t1-t0))
+    #println()
+    #println(nrow(df)/(t1-t0))
     #gc_enable()
     return ret
 end
@@ -189,6 +213,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
 
     bnames = Symbol[]
     btypes = Type[]
+    leafsizes = Any[]
     bvars = Any[]
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
 
@@ -210,6 +235,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
         cn_na = symbol("$(cn)_ISNA")
         bv = Bool[true]
         push!(bvars, bv)
+        push!(leafsizes, 1)
 
         br = Branch(
             tree, string(cn_na),
@@ -224,7 +250,8 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
     dtf = TreeDataFrame(
         tf, tree, bvars,
         DataFrames.Index(bidx, collect(keys(bidx))),
-        btypes
+        btypes,
+        leafsizes
     )
 end
 
