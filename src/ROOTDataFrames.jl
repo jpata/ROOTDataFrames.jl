@@ -13,6 +13,7 @@ type TreeDataFrame <: AbstractDataFrame
     index::DataFrames.Index
     types::Vector{Type}
     leafsizes::Vector{Any}
+    branches::Vector{TBranch}
 end
 
 import DataFrames.showcols
@@ -65,7 +66,8 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
     types = Type[]
     leafsizes = Any[]
     #println(collect(keys(bd)))
-    for k in keys(bd)
+    branch_keys = bd |> keys |> collect |> sort
+    for k in branch_keys
         #println("branch $k")
         leaves = GetListOfLeaves(bd[k])
         if length(leaves)!=1
@@ -130,7 +132,10 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
     idx = DataFrames.Index(bidx, collect(keys(bidx)))
 
-    TreeDataFrame(TObject(C_NULL), tch, bvars, idx, types, leafsizes)
+    TreeDataFrame(
+	TObject(C_NULL), tch, bvars, idx, types, leafsizes,
+        [bd[k] for k in branch_keys]
+    )
 end
 
 TreeDataFrame(fn::String) = TreeDataFrame([fn])
@@ -144,6 +149,15 @@ function Base.length(t::TreeDataFrame)
 end
 Base.size(df::TreeDataFrame) = (nrow(df), ncol(df))
 Base.size(df::TreeDataFrame, n) = size(df)[n]
+
+function load_row(df::TreeDataFrame, i::Integer, s::Vector{Symbol})
+	n = LoadTree(df.tt, i-1)
+	ntot = 0
+	for b in s
+		ntot += GetEntry(df.branches[df.index[b]], n)
+	end
+	return ntot
+end
 
 function load_row(df::TreeDataFrame, i::Integer)
     return GetEvent(df.tt, i-1)
@@ -250,6 +264,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
     btypes = Type[]
     leafsizes = Any[]
     bvars = Any[]
+    brs = TBranch[]
     bidx = Dict{Symbol,Union(Real,AbstractArray{Real,1})}()
 
     nb = 1
@@ -265,6 +280,7 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
             convert(Ptr{Void}, pointer(bv)),
             "$cn/$(SHORT_TYPEMAP[ct])"
         )
+	push!(brs, br)
         bidx[symbol(cn)] = nb
 
         cn_na = symbol("$(cn)_ISNA")
@@ -286,7 +302,8 @@ function TreeDataFrame(fn, ns::AbstractVector, types::AbstractVector; treename="
         tf, tree, bvars,
         DataFrames.Index(bidx, collect(keys(bidx))),
         btypes,
-        leafsizes
+        leafsizes,
+	brs
     )
 end
 
