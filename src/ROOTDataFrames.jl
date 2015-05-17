@@ -107,19 +107,13 @@ function TreeDataFrame(fns::AbstractVector, treename="dataframe")
 
         bvar = (zeros(t, _leafsize), Bool[true for i=1:_leafsize])
         push!(bvars, bvar)
-
-        #does not work reliably for TChain
-        #br = GetBranch(tch, k)
-        #SetAddress(br, convert(Ptr{Void}, bvar[1]))
-        #br = GetBranch(tch, "$(k)_ISNA")
-        #SetAddress(br, convert(Ptr{Void}, bvar[2]))
-
-        #println(bvar[1])
+    
+        #println(k)
         SetBranchAddress(tch, k, convert(Ptr{Void}, pointer(bvar[1])))
         #SetBranchAddress(tch, k, bvar[1])
         if haskey(bd_isna, k)
             #println("NA branch activated for $k")
-            SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, bvar[2]))
+            SetBranchAddress(tch, "$(k)_ISNA", convert(Ptr{Void}, pointer(bvar[2])))
             bvar[2][:] = true
         else
             #println("NA branch de-activated for $k")
