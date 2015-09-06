@@ -3,7 +3,8 @@ module ROOTDataFrames
 include("log.jl")
 
 const MAX_SIZE = 50
-const DEBUG = true
+const DEBUG = false
+
 using ROOT, DataFrames, DataArrays
 import Base.length, Base.getindex
 
@@ -81,7 +82,9 @@ end
 type TreeDataFrame{T} <: AbstractDataFrame
     tf::TObjectA
     tt::TTreeA
-    rowdata::T
+    row::T
+    rowindex::Int64
+    treeindex::Int64
 end
 
 import DataFrames.showcols
@@ -90,7 +93,7 @@ function showcols(io::IO, df::TreeDataFrame)
     metadata = DataFrame(
         Name = names(df),
         Eltype = eltypes(df),
-        sizes = [getsize(getfield(df.rowdata, n)) for n in names(df)],
+        sizes = [getsize(getfield(df.row, n)) for n in names(df)],
         #Missing = colmissing(df)
     )
     showall(io, metadata, true, symbol("Col #"), false)
@@ -102,6 +105,13 @@ function show(io::IO, df::TreeDataFrame)
     return
 end
 
+
+function update_branches!{T}(df::TreeDataFrame{T})
+    for field in fieldnames(df.row)
+        br = GetBranch(df.tt, string(field))
+        getfield(df.row, field).branch = br
+    end
+end
 
 function TreeDataFrame(fns::AbstractVector; treename="dataframe")
 
@@ -190,15 +200,19 @@ function TreeDataFrame(fns::AbstractVector; treename="dataframe")
     
     for field in fieldnames(rowdata)
         typ = fieldtype(rowtype, field)
-        getfield(rowdata, field).branch = branches_d[field]
+        #getfield(rowdata, field).branch = branches_d[field]
         SetBranchAddress(tch, string(field), getfield(rowdata, field).data)
     end
-    
-    TreeDataFrame{rowtype}(
+
+    df = TreeDataFrame{rowtype}(
         TObject(C_NULL),
         tch,
         rowdata,
+        1,
+        1
     )
+    update_branches!(df)
+    return df
 end
 
 TreeDataFrame(fn::String) = TreeDataFrame([fn])
@@ -220,19 +234,25 @@ function load_row(df::TreeDataFrame, i::Integer)
     return GetEntry(df.tt, localentry)
 end
 
+function update!(df::TreeDataFrame, i::Int)
+    treeindex = GetTreeNumber(df.tt) + 1
+    if treeindex != df.treeindex
+        update_branches!(df)
+        df.treeindex = treeindex
+    end
+    df.rowindex = i
+end
 
 function load_row(df::TreeDataFrame, i::Integer, cols::Vector{Symbol})
     @assert !is_null(df.tt)
+
     localentry = LoadTree(df.tt, i-1)
-    if localentry < i-1
-        error("stopping due to ROOT bug: TBranch no longer valid after LoadTree")
-    end
-    println("LoadTree ", i, " ", localentry)
     localentry >= 0 || error("could not get entry $i")
+    update!(df, i)
+
     ntot = 0
     for col in cols
-        println(getfield(df.rowdata, col).branch)
-        br = getfield(df.rowdata, col).branch
+        br = getfield(df.row, col).branch
         @assert !is_null(br)
         ntot += GetEntry(br, localentry)
     end
@@ -242,6 +262,7 @@ end
 function load_row(df::TreeDataFrame, i::Integer)
     localentry = LoadTree(df.tt, i-1)
     localentry >= 0 || error("could not get entry $i")
+    update!(df, i)
     return GetEntry(df.tt, localentry)
 end
 
@@ -253,9 +274,9 @@ function Base.getindex{T <: Any, X <: Any}(
     ::Type{BranchValue{X, 1}}=fieldtype(T, s),
     )
     if getentry
-        load_row(df, i)>0 || error("could not load row $i")
+        load_row(df, i, [s])>0 || error("could not load row $i")
     end
-    ret = getfield(df.rowdata, s)
+    ret = getfield(df.row, s)
     return value(ret)::X
 end
 
@@ -263,15 +284,18 @@ function Base.getindex{T <: Any, R <: Symbol, X <: Any}(
     df::TreeDataFrame{T},
     i::Int64,
     s::Symbol,
-    getentry=false,
+    _size::Int64=-1,
+    getentry::Bool=false,
     ::Type{BranchValue{X, R}}=fieldtype(T, s),
     )
-    sizebranch = getsize(getfield(df.rowdata, s))
-    if getentry
-        load_row(df, i) > 0 || error("could not load row $i")
+    if _size == -1
+        sizebranch = getsize(getfield(df.row, s))
+        if getentry
+            load_row(df, i) > 0 || error("could not load row $i")
+        end
+        _size = value(getfield(df.row, sizebranch))
     end
-    _size = value(getfield(df.rowdata, sizebranch))
-    ret = getfield(df.rowdata, s)
+    ret = getfield(df.row, s)
 
     return value(ret)[1:_size]
 end
@@ -281,10 +305,10 @@ DataFrames.nrow(df::TreeDataFrame) = length(df)
 DataFrames.ncol(df::TreeDataFrame) = length(names(df))
 
 import Base.names
-Base.names(df::TreeDataFrame) = fieldnames(df.rowdata)
+Base.names(df::TreeDataFrame) = fieldnames(df.row)
 
 import DataFrames.eltypes
-DataFrames.eltypes(df::TreeDataFrame) = Type[datatype(getfield(df.rowdata, n)) for n in names(df)]
+DataFrames.eltypes(df::TreeDataFrame) = Type[datatype(getfield(df.row, n)) for n in names(df)]
 
 set_branch_status!(df, pattern, status) = SetBranchStatus(
     df.tt, pattern, status, convert(Ptr{Cuint}, 0)
@@ -310,8 +334,8 @@ function Base.getindex{T}(
     enable_branches(df, ["$(s)*" for s in cols])
 
     #prepare output array
-    names_types = Dict{Symbol, DataType}([n => eltype(getfield(df.rowdata, n)) for n in names(df)])
-    sizes = Dict{Symbol, Any}([n => getsize(getfield(df.rowdata, n)) for n in names(df)])
+    names_types = Dict{Symbol, DataType}([n => eltype(getfield(df.row, n)) for n in names(df)])
+    sizes = Dict{Symbol, Any}([n => getsize(getfield(df.row, n)) for n in names(df)])
 
     #output vector length
     const n = sum(mask)
@@ -343,9 +367,9 @@ function Base.getindex{T}(
     t0 = time()
     for i=1:nrow(df)
         (!isna(mask[i]) && mask[i]) || continue
-        nloaded = load_row(df, i) #fixme: selective row loading
+        nloaded = load_row(df, i, cols)
         for col in cols
-            ret[j, col] = df[i, col]
+            ret[j, col] = value(getfield(df.row, col))
         end
         j += 1
     end
@@ -403,7 +427,9 @@ function TreeDataFrame(
     dtf = TreeDataFrame(
         tf,
         tree,
-        rowdata
+        rowdata,
+        1,
+        1
     )
 end
 
@@ -411,13 +437,13 @@ import Base.setindex!
 function Base.setindex!{T, K <: Real}(
     df::TreeDataFrame{T}, val::K, i::Integer, col::Symbol
     )
-    getfield(df.rowdata, col).data[1] = val
+    getfield(df.row, col).data[1] = val
 end
 
 function Base.setindex!{T, K <: Real}(
     df::TreeDataFrame{T}, val::Vector{K}, i::Integer, col::Symbol
     )
-    getfield(df.rowdata, col).data[:] = val[:]
+    getfield(df.row, col).data[:] = val[:]
 end
 
 function writetree(fn::ASCIIString, df::AbstractDataFrame
@@ -455,6 +481,32 @@ function writetree_temp(outfile, df::DataFrame)
     end
 end
 
+
+function with{T, R <: Real}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vector{Symbol}, rng, ::Type{R})
+    enable_branches(df, branches)
+    ntot = 0
+    tic()
+    ret = zeros(R, length(rng))
+    bitmask = BitArray(length(rng))
+    enable_branches(df, branches)
+    for i=rng
+        ntot += load_row(df, i)
+
+        @inbounds const sel = f2(df.row)::Bool
+        @inbounds bitmask[i] = sel
+        if sel
+            @inbounds const res = f1(df.row)::R
+            @inbounds ret[i] = res
+        end
+    end
+    nmb = float(ntot) / 1024.0 / 1024.0
+    dt = toq()
+    speed = ntot/dt / 1024.0 / 1024.0
+    println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+    return ret[bitmask]
+end
+
+export with
 export BranchValue
 export writetree, TreeDataFrame
 export writetree_temp

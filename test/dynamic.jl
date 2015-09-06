@@ -1,16 +1,25 @@
 using DataFrames, ROOT, ROOTDataFrames
 using Base.Test
 
-df = TreeDataFrame([string(Pkg.dir(), "/ROOTDataFrames/dynamic.root")], "tthNtupleAnalyzer/events")
+df = TreeDataFrame([string(Pkg.dir(), "/ROOTDataFrames/dynamic.root")]; treename="tthNtupleAnalyzer/events")
 
 sumpt = 0.0
 sumjet = 0
 for i=1:nrow(df)
     load_row(df, i)
-    n__jet = df[i, :n__jet, Int64]
-    jet__pt = df[i, :jet__pt, Float64]
+    n__jet = value(df.row.n__jet)
+    jet__pt = value(df.row.jet__pt)[1:n__jet]
     sumjet += n__jet
     sumpt += sum(jet__pt)
 end
 
 @test_approx_eq_eps sumpt/sumjet 56.964209222875205 0.01
+
+
+r = with(df,
+    row->Float64(sum(value(row.jet__pt)[1:value(row.n__jet)])),
+    row->value(row.n__jet)>3, [:jet__pt, :n__jet], 1:length(df),
+    Float64
+)
+println(mean(r))
+@test_approx_eq_eps mean(r) 688.4442511628289 0.01
