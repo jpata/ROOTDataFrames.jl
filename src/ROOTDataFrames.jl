@@ -481,8 +481,10 @@ function writetree_temp(outfile, df::DataFrame)
     end
 end
 
+is_selected(i, row, selector::Function) = selector(row)
+is_selected(i, row, selector::AbstractArray) = selector[i]
 
-function with{T, R <: Real}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vector{Symbol}, rng, ::Type{R})
+function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, branches::Vector{Symbol}, rng=1:length(df), ::Type{R}=Float64)
     enable_branches(df, branches)
     ntot = 0
     tic()
@@ -490,12 +492,12 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, f1::Function, f2::Function, br
     bitmask = BitArray(length(rng))
     enable_branches(df, branches)
     for i=rng
-        ntot += load_row(df, i)
+        ntot += load_row(df, i, branches)
 
-        @inbounds const sel = f2(df.row)::Bool
+        @inbounds const sel = is_selected(i, row, selector)::Bool
         @inbounds bitmask[i] = sel
         if sel
-            @inbounds const res = f1(df.row)::R
+            @inbounds const res = func(df.row)::R
             @inbounds ret[i] = res
         end
     end
@@ -506,7 +508,26 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, f1::Function, f2::Function, br
     return ret[bitmask]
 end
 
-export with
+function loop{T}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vector{Symbol}, rng=1:length(df))
+    enable_branches(df, branches)
+    ntot = 0
+    tic()
+    enable_branches(df, branches)
+    for i=rng
+        ntot += load_row(df, i, branches)
+        @inbounds const sel = f2(df.row)::Bool
+        if sel
+            @inbounds f1(df.row)
+        end
+    end
+    nmb = float(ntot) / 1024.0 / 1024.0
+    dt = toq()
+    speed = ntot/dt / 1024.0 / 1024.0
+    println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+end
+
+
+export with, loop
 export BranchValue
 export writetree, TreeDataFrame
 export writetree_temp
