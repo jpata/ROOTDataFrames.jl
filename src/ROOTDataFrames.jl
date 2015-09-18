@@ -44,7 +44,12 @@ value{T, N <: Symbol}(bval::BranchValue{T, N}) = bval.data::Vector{T}
 value{T, N}(bval::BranchValue{T, N}) = bval.data::Vector{T}
 value{T}(bval::BranchValue{T, 1}) = bval.data[1]::T
 
-export value
+import Base.call
+call{T}(bval::BranchValue{T, 1}) = bval.data[1]::T
+call{T, N}(bval::BranchValue{T, N}) = bval.data[1:N]::Vector{T}
+call{T, N <: Symbol}(bval::BranchValue{T, N}) = bval.data::Vector{T}
+
+#export value
 function makeclass(
     names::Vector{Symbol},
     types::Vector{BranchValue},
@@ -494,7 +499,7 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, bran
     for i=rng
         ntot += load_row(df, i, branches)
 
-        @inbounds const sel = is_selected(i, row, selector)::Bool
+        @inbounds const sel = is_selected(i, df.row, selector)::Bool
         @inbounds bitmask[i] = sel
         if sel
             @inbounds const res = func(df.row)::R
