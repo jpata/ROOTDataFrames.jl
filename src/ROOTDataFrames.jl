@@ -2,7 +2,10 @@ module ROOTDataFrames
 
 include("log.jl")
 
+#maximum size of preallocation for vector branches
 const MAX_SIZE = 50
+
+#print debugging info
 const DEBUG = false
 
 using ROOT, DataFrames, DataArrays
@@ -10,19 +13,13 @@ import Base.length, Base.getindex
 
 import DataFrames.nrow, DataFrames.size, DataFrames.index
 
-const LIBROOT = "/Users/joosep/.julia/v0.4/ROOT/libroot"
-
-function SetBranchAddress{T <: Real}(__obj::TTreeA, bname::ASCIIString, add::Vector{T}, p::Ptr{Void}=C_NULL)
-    ccall(("TTree_SetBranchAddress1",LIBROOT), Int32, (Ptr{Void}, Ptr{UInt8}, Ref{T}, Ptr{Ptr{TBranch}}), __obj.p, bname, add, p)
-end
-
+#holds data from TBranch
 type BranchValue{T, N}
-    data::Vector{T}
-    size::Symbol
+    data::Vector{T} #buffer
+    size::Symbol #branch size (number or other branch name)
     branch::TBranch
 end
 
-#scalar bra
 BranchValue{T<:Real,N <: Symbol}(::Type{T}, s::N, br::TBranch=TBranch(C_NULL)) =
     BranchValue{T,N}(zeros(T, MAX_SIZE), s, br)
 
@@ -51,6 +48,7 @@ datatype{T, N <: Symbol}(bval::BranchValue{T, N}) = Vector{T}
 datatype{T, N}(bval::BranchValue{T, N}) = Vector{T}
 datatype{T}(bval::BranchValue{T, 1}) = T
 
+#return value held in branch buffer
 value{T, N <: Symbol}(bval::BranchValue{T, N}) = bval.data::Vector{T}
 value{T, N}(bval::BranchValue{T, N}) = bval.data::Vector{T}
 value{T}(bval::BranchValue{T, 1}) = bval.data[1]::T
@@ -60,7 +58,7 @@ call{T}(bval::BranchValue{T, 1}) = bval.data[1]::T
 call{T, N}(bval::BranchValue{T, N}) = bval.data[1:N]::Vector{T}
 call{T, N <: Symbol}(bval::BranchValue{T, N}) = bval.data::Vector{T}
 
-#export value
+#makes a class that represents the structure of a tree
 function makeclass(
     names::Vector{Symbol},
     types::Vector{BranchValue},
