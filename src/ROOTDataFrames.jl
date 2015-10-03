@@ -22,10 +22,21 @@ type BranchValue{T, N}
     branch::TBranch
 end
 
-BranchValue{T,N <: Symbol}(::Type{T}, s::N, br::TBranch=TBranch(C_NULL)) =
+#scalar bra
+BranchValue{T<:Real,N <: Symbol}(::Type{T}, s::N, br::TBranch=TBranch(C_NULL)) =
     BranchValue{T,N}(zeros(T, MAX_SIZE), s, br)
-BranchValue{T,N}(::Type{T}, s::Type{Val{N}}, br::TBranch=TBranch(C_NULL)) =
+
+BranchValue{T<:AbstractVector, N <: Symbol}(::Type{T}, s::N, br::TBranch=TBranch(C_NULL)) =
+    BranchValue{eltype(T),N}(zeros(eltype(T), MAX_SIZE), s, br)
+
+#static array
+BranchValue{T<:Real, N}(::Type{T}, s::Type{Val{N}}, br::TBranch=TBranch(C_NULL)) =
     BranchValue{T,N}(zeros(T, N), :nothing, br::TBranch)
+
+#static array from vector
+BranchValue{T<:AbstractVector, N}(::Type{T}, s::Type{Val{N}}, br::TBranch=TBranch(C_NULL)) =
+    BranchValue{eltype(T),N}(zeros(eltype(T), N), :nothing, br::TBranch)
+
 
 getsize{T, N}(bval::BranchValue{T, N}) = N
 getsize{T, N <: Symbol}(bval::BranchValue{T, N}) = bval.size
@@ -271,39 +282,86 @@ function load_row(df::TreeDataFrame, i::Integer)
     return GetEntry(df.tt, localentry)
 end
 
-function Base.getindex{T <: Any, X <: Any}(
-    df::TreeDataFrame{T},
-    i::Int64,
-    s::Symbol,
-    getentry=false,
-    ::Type{BranchValue{X, 1}}=fieldtype(T, s),
-    )
-    if getentry
-        load_row(df, i, [s])>0 || error("could not load row $i")
-    end
-    ret = getfield(df.row, s)
-    return value(ret)::X
-end
 
-function Base.getindex{T <: Any, R <: Symbol, X <: Any}(
+#return value of scalar branch
+@generated function Base.getindex{T <: Any, X <: Any, N}(
     df::TreeDataFrame{T},
     i::Int64,
     s::Symbol,
-    _size::Int64=-1,
-    getentry::Bool=false,
-    ::Type{BranchValue{X, R}}=fieldtype(T, s),
+    getentry::Bool=true,
+    ft::Type{BranchValue{X, N}}=fieldtype(T, s),
     )
-    if _size == -1
-        sizebranch = getsize(getfield(df.row, s))
-        if getentry
-            load_row(df, i) > 0 || error("could not load row $i")
+
+    if N == Symbol
+        ex = quote
+            #get dynamic branch size
+            sizebranch = getsize(getfield(df.row, s))
+            if getentry
+                load_row(df, i, [s, sizebranch]) > 0 || error("could not load row $i")
+            end
+            _size = value(getfield(df.row, sizebranch))
+            ret = getfield(df.row, s)
+            return value(ret)[1:_size]::Vector{X}
         end
-        _size = value(getfield(df.row, sizebranch))
-    end
-    ret = getfield(df.row, s)
+    else
+        if N == 1
+            ret  = :(value(ret)::X)
+        elseif N > 1
+            ret = :(value(ret)[1:$N]::Vector{X})
+        end
 
-    return value(ret)[1:_size]
+        ex = quote
+            if getentry
+                load_row(df, i, [s])>0 || error("could not load row $i")
+            end
+            ret = getfield(df.row, s)
+            return $ret
+        end
+    end
+
+    return ex
+
 end
+# 
+# #return value of scalar branch
+# function Base.getindex{T <: Any, X <: Any}(
+#     df::TreeDataFrame{T},
+#     i::Int64,
+#     s::Symbol,
+#     getentry::Bool=true,
+#     ::Type{BranchValue{X, N}}=fieldtype(T, s),
+#     )
+#     println("scalar called ", s)
+#     if getentry
+#         load_row(df, i, [s])>0 || error("could not load row $i")
+#     end
+#     ret = getfield(df.row, s)
+#     @show ret
+#     return value(ret)[1:_size]
+# end
+
+#return value of dynamic branch
+# function Base.getindex{T <: Any, R <: Symbol, X <: Any}(
+#     df::TreeDataFrame{T},
+#     i::Int64,
+#     s::Symbol,
+#     getentry::Bool=true,
+#     _size::Int64=-1,
+#     ft::Type{BranchValue{X, R}}=fieldtype(T, s),
+#     )
+#     println(ft)
+#     #get dynamic branch size
+#     if _size == -1
+#         sizebranch = getsize(getfield(df.row, s))
+#         if getentry
+#             load_row(df, i) > 0 || error("could not load row $i")
+#         end
+#         _size = value(getfield(df.row, sizebranch))
+#     end
+#     ret = getfield(df.row, s)
+#     @show ret, _size
+#     return value(ret)[1:_size]::Vector{X}
+# end
 
 import DataFrames.nrow, DataFrames.ncol
 DataFrames.nrow(df::TreeDataFrame) = length(df)
@@ -350,6 +408,7 @@ function Base.getindex{T}(
     #gc_disable()
    
     arrlist = Any[]
+    coltypes = Type[]
     for col in cols
         _size = sizes[col]
         _type = names_types[col]
@@ -359,10 +418,12 @@ function Base.getindex{T}(
         if _size > 1
             _type = DataVector{_type}
         end
+        push!(coltypes, _type)
         a = DataFrames.DataArray(_type, n)
         push!(arrlist, a)
     end
 
+    #construct output dataframe
     const ret = DataFrame(
         arrlist,
         DataFrames.Index(cols)
@@ -370,15 +431,17 @@ function Base.getindex{T}(
     j = 1
 
     t0 = time()
+    nloaded = 0
     for i=1:nrow(df)
         (!isna(mask[i]) && mask[i]) || continue
-        nloaded = load_row(df, i, cols)
-        for col in cols
-            ret[j, col] = value(getfield(df.row, col))
+        nloaded += load_row(df, i, cols)
+        for (icol, col) in enumerate(cols)
+            ret[j, col] = df[i, col]
         end
         j += 1
     end
     t1 = time()
+    enable_branches(df, ["*"])
     #gc_enable()
     return ret
 end
@@ -392,11 +455,13 @@ Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]
 TreeDataFrame(
     fn::ASCIIString,
     names::Vector{Symbol},
-    types::Vector{Type}
+    types::Vector{Type},
+    colsizes::Vector{Any}
     ;kwargs...
     ) = TreeDataFrame(
         fn, names,
-        BranchValue[BranchValue(dt, Val{1}) for dt in types]; kwargs...
+        BranchValue[BranchValue(dt, cs) for (dt, cs) in
+        zip(types, colsizes)]; kwargs...
 )
 
 function TreeDataFrame(
@@ -419,13 +484,32 @@ function TreeDataFrame(
     for (ibranch, (name, typ)) in enumerate(
         zip(names, types)
         )
-        
         eltyp = eltype(typ)
+
+        sz = getsize(typ)
+        rtype = SHORT_TYPEMAP[eltyp]
+
+
+        
+        brstring = ""
+
+        #variable size branch
+        if isa(sz, Symbol)
+            brstring = "$name[$sz]/$rtype"
+        #fixed size branch
+        elseif sz > 1
+            brstring = "$name[$sz]/$rtype"
+        # scalar branch
+        else
+            brstring = "$name/$rtype"
+        end
+
         br = Branch(
             tree, string(name),
             convert(Ptr{Void}, pointer(getfield(rowdata, name).data)),
-            "$name/$(SHORT_TYPEMAP[eltyp])"
+            brstring
         )
+        assert(root_pointer(br) != C_NULL)
         getfield(rowdata, name).branch = br
     end
 
@@ -448,12 +532,46 @@ end
 function Base.setindex!{T, K <: Real}(
     df::TreeDataFrame{T}, val::Vector{K}, i::Integer, col::Symbol
     )
-    getfield(df.row, col).data[:] = val[:]
+    v = val[:]
+    lv = length(v)
+    assert(lv < MAX_SIZE)
+    #fill with zeros
+    getfield(df.row, col).data[:] = zero(eltype(getfield(df.row, col)))
+
+    #fill with correct length
+    getfield(df.row, col).data[1:lv] = v[1:lv] 
 end
 
 function writetree(fn::ASCIIString, df::AbstractDataFrame
-    ;progress=true, treename="dataframe")
-    dtf = TreeDataFrame(fn, names(df), eltypes(df);treename=treename)
+    ;progress=true,
+    treename="dataframe"
+    )
+    colsizes = Any[]
+
+    _eltypes = eltypes(df)
+    _names = names(df)
+    _sizes = Array(Any, ncol(df))
+    for i=1:ncol(df)
+        _el = _eltypes[i]
+        _cname = _names[i]
+        
+        size_branch = symbol(:n, _cname)
+        idx_size = findfirst(_names, size_branch)
+        if idx_size > 0
+            idx_size > i && error("found size branch $size_branch for $_cname, but must be declared before.")
+            _size = size_branch
+
+        #constant size
+        elseif _el <: AbstractVector && eltype(_el) <: Real
+            maxsize = maximum(map(x->length(df[x, _cname]), 1:nrow(df)))
+            assert(maxsize < MAX_SIZE)
+            _size = Val{maxsize}
+        else
+            _size = Val{1}
+        end
+        _sizes[i] = _size
+    end
+    dtf = TreeDataFrame(fn, _names, _eltypes, _sizes;treename=treename)
 
     colnames = names(df)
     for i=1:nrow(df)
@@ -495,7 +613,6 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, bran
     tic()
     ret = zeros(R, length(rng))
     bitmask = BitArray(length(rng))
-    enable_branches(df, branches)
     for i=rng
         ntot += load_row(df, i, branches)
 
@@ -510,6 +627,7 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, bran
     dt = toq()
     speed = ntot/dt / 1024.0 / 1024.0
     println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+    enable_branches(df, ["*"])
     return ret[bitmask]
 end
 
@@ -517,7 +635,6 @@ function loop{T}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vec
     enable_branches(df, branches)
     ntot = 0
     tic()
-    enable_branches(df, branches)
     for i=rng
         ntot += load_row(df, i, branches)
         @inbounds const sel = f2(df.row)::Bool
@@ -529,6 +646,7 @@ function loop{T}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vec
     dt = toq()
     speed = ntot/dt / 1024.0 / 1024.0
     println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+    enable_branches(df, ["*"])
 end
 
 
