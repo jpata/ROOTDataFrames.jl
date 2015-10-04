@@ -645,7 +645,7 @@ function loop{T}(df::TreeDataFrame{T}, f1::Function, f2::Function, branches::Vec
     enable_branches(df, ["*"])
 end
 
-
+export value
 export with, loop
 export BranchValue
 export writetree, TreeDataFrame
