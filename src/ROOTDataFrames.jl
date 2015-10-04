@@ -540,10 +540,7 @@ function Base.setindex!{T, K <: Real}(
     getfield(df.row, col).data[1:lv] = v[1:lv] 
 end
 
-function writetree(fn::ASCIIString, df::AbstractDataFrame
-    ;progress=true,
-    treename="dataframe"
-    )
+function TreeDataFrame(df::AbstractDataFrame, filename; size_branches::Associative=Dict(), treename="dataframe")
     colsizes = Any[]
 
     _eltypes = eltypes(df)
@@ -553,7 +550,8 @@ function writetree(fn::ASCIIString, df::AbstractDataFrame
         _el = _eltypes[i]
         _cname = _names[i]
         
-        size_branch = symbol(:n, _cname)
+        size_branch = get(size_branches, _cname, symbol(:n, _cname))
+
         idx_size = findfirst(_names, size_branch)
         if idx_size > 0
             idx_size > i && error("found size branch $size_branch for $_cname, but must be declared before.")
@@ -564,17 +562,17 @@ function writetree(fn::ASCIIString, df::AbstractDataFrame
             maxsize = maximum(map(x->length(df[x, _cname]), 1:nrow(df)))
             assert(maxsize < MAX_SIZE)
             _size = Val{maxsize}
+        #scalar
         else
             _size = Val{1}
         end
         _sizes[i] = _size
     end
-    dtf = TreeDataFrame(fn, _names, _eltypes, _sizes;treename=treename)
+    dtf = TreeDataFrame(filename, _names, _eltypes, _sizes;treename=treename)
 
-    colnames = names(df)
     for i=1:nrow(df)
         for j=1:ncol(df)
-            dtf[i, colnames[j]] = df[i, colnames[j]]
+            dtf[i, _names[j]] = df[i, _names[j]]
         end
 
         Fill(dtf.tt)
@@ -582,30 +580,29 @@ function writetree(fn::ASCIIString, df::AbstractDataFrame
 
     Write(dtf.tt)
     Close(dtf.tf)
+    return TreeDataFrame([filename]; treename=treename)
 end
 
-function writetree_temp(outfile, df::DataFrame)
-    tempf = mktemp()[1]
-    print("writing to $tempf...");writetree(tempf, df);println("done")
-    
-    for i=1:5
-        try
-            println("cleaning $outfile...");isfile(outfile) && rm(outfile)
-            println("copying...");cp(tempf, outfile)
-            s = stat(outfile)
-            s.size == 0 && error("file corrupted")
-            break
-        catch err
-            warn("$err: retrying after sleep")
-            sleep(5)
-        end
-    end
+function writetree(
+    fn::ASCIIString,
+    df::AbstractDataFrame;
+    size_branches=Dict(),
+    treename="dataframe"
+    )
+    TreeDataFrame(df, fn; size_branches=size_branches, treename=treename)
 end
 
 is_selected(i, row, selector::Function) = selector(row)
 is_selected(i, row, selector::AbstractArray) = selector[i]
 
-function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, branches::Vector{Symbol}, rng=1:length(df), ::Type{R}=Float64)
+function with{T, R <: Real}(
+    df::TreeDataFrame{T}, #input data
+    func::Function, #process func ev->R
+    selector, #selector func ev->Bool
+    branches::Vector{Symbol}, #branches to enable
+    rng=1:length(df), #rows to process
+    ::Type{R}=Float64 #return type
+    )
     enable_branches(df, branches)
     ntot = 0
     tic()
@@ -624,7 +621,8 @@ function with{T, R <: Real}(df::TreeDataFrame{T}, func::Function, selector, bran
     nmb = float(ntot) / 1024.0 / 1024.0
     dt = toq()
     speed = ntot/dt / 1024.0 / 1024.0
-    println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+    #println("Read ", round(nmb), " Mb in ", dt, " s speed=", round(speed,2), " Mb/s")
+    #re-enable branches
     enable_branches(df, ["*"])
     return ret[bitmask]
 end
