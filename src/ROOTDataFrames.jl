@@ -452,12 +452,13 @@ Base.getindex(df::TreeDataFrame, mask::AbstractVector, s::Symbol) = df[mask, [s]
 
 TreeDataFrame(
     fn::ASCIIString,
-    names::Vector{Symbol},
-    types::Vector{Type},
-    colsizes::Vector{Any}
+    names::AbstractVector,
+    types::AbstractVector,
+    colsizes::AbstractVector
     ;kwargs...
     ) = TreeDataFrame(
-        fn, names,
+        ascii(fn),
+        [symbol(n) for n in names],
         BranchValue[BranchValue(dt, cs) for (dt, cs) in
         zip(types, colsizes)]; kwargs...
 )
