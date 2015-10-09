@@ -1,6 +1,6 @@
 module ROOTDataFrames
 
-include("log.jl")
+#include("log.jl")
 
 #maximum size of preallocation for vector branches
 const MAX_SIZE = 50
@@ -129,24 +129,24 @@ end
 
 function TreeDataFrame(fns::AbstractVector; treename="dataframe")
 
-    @debugprint "opening $fns:$treename"
+    #@debugprint "opening $fns:$treename"
     #DEBUG && println("[TreeDataFrame] opening $fns:$treename")
     tch = TChain(treename)
 
     for fn in fns
-        @debugprint "adding file $fn"
+        #@debugprint "adding file $fn"
         #-1 -> load number of entries from file
         AddFile(tch, convert(ASCIIString, fn), -1)
         nentries = GetEntries(tch)
-        @debugprint "N=$nentries"
+        #@debugprint "N=$nentries"
     end
-    @debugprint "TChain $tch created"
+    #@debugprint "TChain $tch created"
     #tf = TFile(fn)
     #tt = root_cast(TTree, Get(root_cast(ROOT.TDirectory, tf), "dataframe"))
 
     branches = GetListOfBranches(tch);
     branches = [root_cast(TBranch, branches[i]) for i=1:length(branches)];
-    @debugprint "TTree has $(length(branches)) branches"
+    #@debugprint "TTree has $(length(branches)) branches"
     branches_d = Dict()
     branch_names = Symbol[]
     branch_types = BranchValue[]
@@ -229,7 +229,7 @@ function TreeDataFrame(fns::AbstractVector; treename="dataframe")
     return df
 end
 
-TreeDataFrame(fn::String) = TreeDataFrame([fn])
+TreeDataFrame(fn::AbstractString) = TreeDataFrame([ascii(fn)])
 
 function Base.length(t::TreeDataFrame)
     if t.tt != C_NULL
